@@ -6,9 +6,9 @@
 #include <omp.h>
 #include <mpi.h>
 
-#define mat_get(m, w, i, j) (m[i*w + j])
-#define mat_row(m, w, i) (&m[i*w])
-#define MIN(a, b) (a < b ? a : b)
+#define mat_get(m, w, i, j) ((m)[(i)*(w) + (j)])
+#define mat_row(m, w, i) (&((m)[(i)*(w)]))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 void read_matrix(double **m, int *w, int *h);
 int row_process(int row_idx, int world_size, int *counts);
@@ -17,7 +17,7 @@ void row_swap(
 	int best_row, int curr_col, int *counts, int w,
 	int world_size, double *subm, int subm_start, int global_rank,
 	double *row_aux);
-void row_normalize(double *subm, int subm_start, int col, int w);
+void row_normalize(double *row, int col, int w);
 
 enum {
 	TAG_PING,
@@ -189,9 +189,13 @@ int main(int argc, char *argv[]) {
 
 		printf("process %d\t\trow_process(%d) = %d\n", global_rank, curr_column_idx, row_process(curr_column_idx, world_size, counts));
 		if (global_rank == row_process(curr_column_idx, world_size, counts)) {
-			//row_print(mat_row(subm, w, curr_column_idx-subm_start), w);
-			row_normalize(subm, subm_start, curr_column_idx, w);
+			double *subm_row = mat_row(subm, w, curr_column_idx - subm_start);
+			row_normalize(subm_row, curr_column_idx, w);
+			row_print(subm_row, w);
+			memcpy(row_aux, subm_row, w*sizeof(*subm));
 		}
+		// MPI_Bcast(
+		// 	row_aux);
 		// TODO broadcast and eliminate other entries in this column
 		MPI_Barrier(MPI_COMM_WORLD);
 	}
@@ -206,7 +210,6 @@ int main(int argc, char *argv[]) {
 		MPI_DOUBLE,	// recv type
 		0,			// root
 		MPI_COMM_WORLD);
-	printf("\n\n\n\n\n\n");
 	if (global_rank == 0) {
 		for (i = 0; i < h; i++) {
 			row_print(&m[i*w], w);
@@ -330,17 +333,15 @@ void row_swap(
 	}
 }
 
-void row_normalize(double *subm, int subm_start, int col, int w) {
-	int row_idx = col - subm_start;
+void row_normalize(double *row, int col, int w) {
 	int i;
-	double *row;
 	double first;
 
-	row = mat_row(subm, w, row_idx);
 	first = row[col];
+	// printf("FIRST: %lf\n", first);
 	#pragma omp parallel for
 	for (i = 0; i < w; i++) {
-		printf("%lf / %lf = %lf", row[i], first, row[i]/first);
+		printf("%lf / %lf = %lf\n", row[i], first, row[i]/first);
 		row[i] /= first;
 	}
 }
