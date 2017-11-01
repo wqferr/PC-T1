@@ -12,7 +12,7 @@ run:
 	@mpirun -np $(np) $(OUTFILE)
 
 runv:
-	@valgrind --leak-check=full mpirun -np $(np) $(OUTFILE)
+	@valgrind --leak-check=full --show-leak-kinds=all mpirun -np $(np) $(OUTFILE)
 
 clean:
 	@rm $(OUTFILE)
