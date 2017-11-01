@@ -6,19 +6,22 @@
 #include <omp.h>
 #include <mpi.h>
 
+#define mat_get(m, w, i, j) (m[i*w + j])
+#define mat_row(m, w, i) (&m[i*w])
 #define MIN(a, b) (a < b ? a : b)
 
 void read_matrix(double **m, int *w, int *h);
-int row_process(int row_idx, int world_size, int *counts, int w);
-void print_row(double *r, int w);
-void swap_rows(
+int row_process(int row_idx, int world_size, int *counts);
+void row_print(double *r, int w);
+void row_swap(
 	int best_row, int curr_col, int *counts, int w,
 	int world_size, double *subm, int subm_start, int global_rank,
 	double *row_aux);
+void row_normalize(double *subm, int subm_start, int col, int w);
 
 enum {
 	TAG_PING,
-	TAG_SWAP_ROWS
+	TAG_row_swap
 };
 
 typedef struct {
@@ -28,7 +31,7 @@ typedef struct {
 
 int main(int argc, char *argv[]) {
 	int global_rank, world_size;
-	int i, j;
+	int i;
 	int subm_start; // first row the process is responsible for
 	int subm_n_rows; // number of rows of the process's submatrix
 	int curr_column_idx = 0; // current row being eliminated
@@ -146,7 +149,7 @@ int main(int argc, char *argv[]) {
 			if (subm_start + i >= curr_column_idx) {
 				// row is candidate for swapping
 	
-				double v = abs(subm[i*w + curr_column_idx]);
+				double v = abs(mat_get(subm, w, i, curr_column_idx));
 				#pragma omp critical
 				{
 					if (v > best_local.value) {
@@ -179,11 +182,16 @@ int main(int argc, char *argv[]) {
 			if (global_rank == 0) {
 				printf("swap rows %d and %d\n", best.row, curr_column_idx);
 			}
-			swap_rows(
+			row_swap(
 				best.row, curr_column_idx, counts, w,
 				world_size, subm, subm_start, global_rank, row_aux);
 		}
 
+		printf("process %d\t\trow_process(%d) = %d\n", global_rank, curr_column_idx, row_process(curr_column_idx, world_size, counts));
+		if (global_rank == row_process(curr_column_idx, world_size, counts)) {
+			//row_print(mat_row(subm, w, curr_column_idx-subm_start), w);
+			row_normalize(subm, subm_start, curr_column_idx, w);
+		}
 		// TODO broadcast and eliminate other entries in this column
 		MPI_Barrier(MPI_COMM_WORLD);
 	}
@@ -198,9 +206,10 @@ int main(int argc, char *argv[]) {
 		MPI_DOUBLE,	// recv type
 		0,			// root
 		MPI_COMM_WORLD);
+	printf("\n\n\n\n\n\n");
 	if (global_rank == 0) {
 		for (i = 0; i < h; i++) {
-			print_row(&m[i*w], w);
+			row_print(&m[i*w], w);
 		}
 	}
 
@@ -232,7 +241,7 @@ void read_matrix(double **matrix, int *width, int *height) {
 	*height = h;
 }
 
-int row_process(int row_idx, int world_size, int *counts, int w) {
+int row_process(int row_idx, int world_size, int *counts) {
 	int i;
 
 	for (i = 0; i < world_size; i++) {
@@ -247,7 +256,7 @@ int row_process(int row_idx, int world_size, int *counts, int w) {
 	return -1;
 }
 
-void print_row(double *r, int w) {
+void row_print(double *r, int w) {
 	int i;
 	for (i = 0; i < w; i++) {
 		printf("%lf ", r[i]);
@@ -255,13 +264,13 @@ void print_row(double *r, int w) {
 	printf("\n");
 }
 
-void swap_rows(
+void row_swap(
 	int best_row, int curr_col, int *counts, int w,
 	int world_size, double *subm, int subm_start, int global_rank,
 	double *row_aux) {
 
-	int proc_best = row_process(best_row, world_size, counts, w);
-	int proc_curr = row_process(curr_col, world_size, counts, w);
+	int proc_best = row_process(best_row, world_size, counts);
+	int proc_curr = row_process(curr_col, world_size, counts);
 	MPI_Status status;
 
 	if (global_rank == 0) {
@@ -272,8 +281,8 @@ void swap_rows(
 			int row1_idx = curr_col - subm_start;
 			int row2_idx = best_row - subm_start;
 
-			double *row1 = &subm[row1_idx*w];
-			double *row2 = &subm[row2_idx*w];
+			double *row1 = mat_row(subm, w, row1_idx);
+			double *row2 = mat_row(subm, w, row2_idx);
 
 			// swap rows
 			memcpy(row_aux, row1, w*sizeof(*subm));
@@ -283,38 +292,55 @@ void swap_rows(
 	} else {
 		if (global_rank == proc_best) { // process contains best row
 			int row_idx = best_row - subm_start;
+			double *subm_row = mat_row(subm, w, row_idx);
 
 			MPI_Send(
-				&subm[row_idx*w],	// send buffer
+				subm_row,			// send buffer
 				w, MPI_DOUBLE,		// type and number
 				proc_curr,			// dest
-				TAG_SWAP_ROWS,		// tag
+				TAG_row_swap,		// tag
 				MPI_COMM_WORLD);
 			MPI_Recv(
 				row_aux,
 				w, MPI_DOUBLE,
 				proc_curr,
-				TAG_SWAP_ROWS,
+				TAG_row_swap,
 				MPI_COMM_WORLD,
 				&status);
-			memcpy(&subm[row_idx*w], row_aux, w*sizeof(*subm));
+			memcpy(subm_row, row_aux, w*sizeof(*subm));
 		} else if (global_rank == proc_curr) {
 			int row_idx = curr_col - subm_start;
+			double *subm_row = mat_row(subm, w, row_idx);
 
 			MPI_Send(
-				&subm[row_idx*w],	// send buffer
+				subm_row,			// send buffer
 				w, MPI_DOUBLE,		// type and number
 				proc_best,			// dest
-				TAG_SWAP_ROWS,		// tag
+				TAG_row_swap,		// tag
 				MPI_COMM_WORLD);
 			MPI_Recv(
 				row_aux,
 				w, MPI_DOUBLE,
 				proc_best,
-				TAG_SWAP_ROWS,
+				TAG_row_swap,
 				MPI_COMM_WORLD,
 				&status);
-			memcpy(&subm[row_idx*w], row_aux, w*sizeof(*subm));
+			memcpy(subm_row, row_aux, w*sizeof(*subm));
 		}
+	}
+}
+
+void row_normalize(double *subm, int subm_start, int col, int w) {
+	int row_idx = col - subm_start;
+	int i;
+	double *row;
+	double first;
+
+	row = mat_row(subm, w, row_idx);
+	first = row[col];
+	#pragma omp parallel for
+	for (i = 0; i < w; i++) {
+		printf("%lf / %lf = %lf", row[i], first, row[i]/first);
+		row[i] /= first;
 	}
 }
