@@ -8,7 +8,10 @@
 
 #define mat_get(m, w, i, j) ((m)[(i)*(w) + (j)])
 #define mat_row(m, w, i) (&((m)[(i)*(w)]))
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define min(a, b) ((a) < (b) ? (a) : (b))
+
+#define MATRIX_FILENAME "matriz.txt"
+#define VECTOR_FILENAME "vetor.txt"
 
 void read_matrix(double **m, int *w, int *h);
 int row_process(int row_idx, int world_size, int *counts);
@@ -64,7 +67,7 @@ int main(int argc, char *argv[]) {
 								// with lowest ranks
 
 		read_matrix(&m, &w, &h);
-		max_elim_col = MIN(w, h);
+		max_elim_col = min(w, h);
 
 		rows_per_process = h / world_size;
 
@@ -242,16 +245,38 @@ int main(int argc, char *argv[]) {
 
 void read_matrix(double **matrix, int *width, int *height) {
 	int i, j;
-	int w, h, n;
+	int w, h;
+	char c;
 	double *m;
+	FILE *mf;
+	FILE *vf;
 
-	scanf("%d%d", &h, &w);
+	mf = fopen(MATRIX_FILENAME, "r");
+	vf = fopen(VECTOR_FILENAME, "r");
 
-	n = w*h;
-	m = malloc(n * sizeof(*m));
-	for (i = 0; i < n; i++) {
-		scanf("%lf", &m[i]);
+	// count number of elements in the first row
+	w = 1;
+	while ((c = fgetc(mf)) != '\n') {
+		if (c == ' ') {
+			w++;
+		}
 	}
+	h = w; // assume matrix is square
+	rewind(mf);
+
+	// assume it is a valid matrix and all rows have the same length
+
+	w++; // account for extra column for the vector
+
+	m = malloc(w*h * sizeof(*m));
+	for (i = 0; i < h; i++) {
+		for (j = 0; j < (w-1); j++) {
+			fscanf(mf, "%lf", &mat_get(m, w, i, j));
+		}
+		fscanf(vf, "%lf", &mat_get(m, w, i, j));
+	}
+	fclose(mf);
+	fclose(vf);
 
 	*matrix = m;
 	*width = w;
