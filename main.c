@@ -12,6 +12,7 @@
 
 #define MATRIX_FILENAME "matriz.txt"
 #define VECTOR_FILENAME "vetor.txt"
+#define OUT_FILENAME "resultado.txt"
 
 void read_matrix(double **m, int *w, int *h);
 int row_process(int row_idx, int world_size, int *counts);
@@ -51,6 +52,7 @@ int main(int argc, char *argv[]) {
 	double *subm = NULL; // rows this process is responsible for
 	double *row_aux = NULL; // row to be used for elimination
 	MPI_Status status;
+	FILE *of;
 
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &global_rank);
@@ -210,11 +212,14 @@ int main(int argc, char *argv[]) {
 		MPI_DOUBLE,	// recv type
 		0,			// root
 		MPI_COMM_WORLD);
+
+	of = fopen(OUT_FILENAME, "w+");
 	if (global_rank == 0) {
 		for (i = 0; i < h; i++) {
-			row_print(&m[i*w], w);
+			fprintf(of, "%.3lf\n", m[(i+1)*w - 1]);
 		}
 	}
+	fclose(of);
 
 	free(send_counts);
 	free(displs);
