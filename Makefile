@@ -3,7 +3,7 @@ OUTFILE := ./out
 np?=4
 
 all:
-	@mpicc -fopenmp -lm -o $(OUTFILE) main.c
+	@mpicc -Wall -fopenmp -lm -o $(OUTFILE) main.c
 
 dbg:
 	@mpicc -fopenmp -lm -g -o $(OUTFILE) main.c
