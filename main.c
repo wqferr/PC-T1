@@ -249,8 +249,8 @@ int main(int argc, char *argv[]) {
 	}
 
 	free(proc_elm_count);
-	free(displs);
 	free(proc_row_count);
+	free(displs);
 	free(elim_row);
 	free(m);
 	free(subm);
@@ -333,7 +333,7 @@ void row_elim_col(
 
 	first = dest_row[elim_col];
 
-	// can't use omp parallel here as this function call
+	// can't use omp parallel here, as this function call
 	// is already nested into a parallel for loop
 	for (i = 0; i < w; i++) {
 		dest_row[i] -= first * row[i];
