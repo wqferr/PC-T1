@@ -1,18 +1,22 @@
 OUTFILE := ./out
+NTFLAG :=
 
-np?=4
+np ?= 4
+
+ifneq (,$(nr))
+$(shell cp matriz$(nr).txt matriz.txt)
+$(shell cp vetor$(nr).txt vetor.txt)
+endif
+
+ifneq (,$(nt))
+NTFLAG := -D NUM_THREADS_PER_PROCESS=$(nt)
+endif
 
 all:
-	@mpicc -Wall -fopenmp -lm -o $(OUTFILE) main.c
-
-dbg:
-	@mpicc -fopenmp -lm -g -o $(OUTFILE) main.c
+	@mpicc $(NTFLAG) -fopenmp -lm -o $(OUTFILE) main.c
 
 run:
 	@mpirun -np $(np) $(OUTFILE)
-
-runv:
-	@valgrind --leak-check=full --show-leak-kinds=all mpirun -np $(np) $(OUTFILE)
 
 clean:
 	@rm $(OUTFILE)

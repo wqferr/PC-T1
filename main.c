@@ -149,6 +149,7 @@ int main(int argc, char *argv[]) {
 		best_local.absval = -1;
 		best.absval = -1;
 
+		// TODO remove internal if
 		// no sense in parallelizing this, all of the code
 		// would be inside a critical region
 		for (i = 0; i < subm_n_rows; i++) {
@@ -239,7 +240,7 @@ int main(int argc, char *argv[]) {
 
 	if (global_rank == 0) {
 		t = omp_get_wtime() - t;
-		printf("finished in %lf seconds\n", t);
+		printf("%.3lf seconds\n", t);
 
 		of = fopen(OUT_FILENAME, "w+");
 		for (i = 0; i < h; i++) {
