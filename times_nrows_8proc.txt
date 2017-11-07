@@ -1,0 +1,4 @@
+Number of rows, 4 threads per process, 8 threads per process
+1000,1.119,1.138
+5000,55.071,54.757
+10000,411.785,406.097

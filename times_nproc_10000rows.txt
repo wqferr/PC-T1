@@ -1,0 +1,5 @@
+Number of processes, 4 threads per process, 8 threads per process
+1,1977.427,1994.718
+2,1051.814,1060.625
+4,780.361,780.078
+8,411.785,406.097
