@@ -16,7 +16,7 @@ all:
 	@mpicc $(NTFLAG) -fopenmp -lm -o $(OUTFILE) main.c
 
 run:
-	@mpirun -np $(np) $(OUTFILE)
+	@mpirun --hostfile hosts -np $(np) $(OUTFILE)
 
 clean:
 	@rm $(OUTFILE)
