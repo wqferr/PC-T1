@@ -6,10 +6,15 @@
 #include <omp.h>
 #include <mpi.h>
 
+// finds and element in the given matrix with width w
 #define mat_get(m, w, i, j) ((m)[(i)*(w) + (j)])
+
+// returns the address of the first element in the ith row of m with width w
 #define mat_row(m, w, i) (&((m)[(i)*(w)]))
+
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
+// I/O filenames
 #define MATRIX_FILENAME "matriz.txt"
 #define VECTOR_FILENAME "vetor.txt"
 #define OUT_FILENAME "resultado.txt"
@@ -18,9 +23,18 @@
 #define NUM_THREADS_PER_PROCESS 8
 #endif
 
+// reads the extended matrix from both the matrix and vector files
 void read_matrix(double **m, int *w, int *h);
+
+// returns the rank of the process which contains the given row
 int row_find_proc(int row_idx, int world_size, int *proc_row_count);
+
+// divides all elements of the row by its main diagonal entry
 void row_normalize(double *row, int col, int w);
+
+// given a normalized row "row" and another row of the matrix to be normalized,
+// subtract dest_row from a multiple of row so as to eliminate the column
+// elim_col from dest_row
 void row_elim_col(
 	const double *row, double *dest_row, int w, int elim_col);
 
@@ -46,7 +60,7 @@ int main(int argc, char *argv[]) {
 	int elim_idx = 0; // current row being eliminated
 	int w, h; // matrix dimensions
 	int max_elim_col; // the number of iterations the algorithm should do
-	// double t; // for measuring response time
+	double t; // for measuring response time
 	int *displs = NULL; // displacements for MPI_Scatterv
 	int *proc_row_count = NULL; // number of rows each process is responsible for
 	int *proc_elm_count = NULL; // proc_row_count for MPI_Scatterv
@@ -91,7 +105,7 @@ int main(int argc, char *argv[]) {
 			displs[i] = displs[i-1] + proc_row_count[i-1]*w;
 		}
 
-		// t = omp_get_wtime();
+		t = omp_get_wtime();
 	}
 
 	// ========== Broadcast information to other processes =========
@@ -127,6 +141,7 @@ int main(int argc, char *argv[]) {
 	subm = malloc(proc_row_count[global_rank]*w * sizeof(*subm));
 	subm_n_rows = proc_row_count[global_rank];
 
+	// divide m between all processes
 	MPI_Scatterv(
 		m,				// send buffer
 		proc_elm_count, displs,	// send block size and displacement
@@ -172,7 +187,10 @@ int main(int argc, char *argv[]) {
 			MPI_MAXLOC,		// operation
 			MPI_COMM_WORLD);
 
+		// process which contains row with index best.row
 		best_row_proc = row_find_proc(best.row, world_size, proc_row_count);
+		// process which contains row with index elim_idx
+		// (new position for selected best row)
 		elim_row_proc = row_find_proc(elim_idx, world_size, proc_row_count);
 		if (global_rank == best_row_proc) {
 			double *subm_row = mat_row(subm, w, best.row - subm_start);
@@ -180,22 +198,31 @@ int main(int argc, char *argv[]) {
 			memcpy(elim_row, subm_row, w*sizeof(*subm));
 		}
 
+		// all processes need to receive the row to be used for elimination
 		MPI_Bcast(
 			elim_row,
 			w, MPI_DOUBLE,
 			best_row_proc,
 			MPI_COMM_WORLD);
 
-		if (best.row != elim_idx) { // swap required
-			if (best_row_proc == elim_row_proc) { // intra-process swap
+		if (best.row != elim_idx) {
+			// swap required
+			if (best_row_proc == elim_row_proc) {
+				// intra-process swap
 				if (global_rank == best_row_proc) {
+					// this is the process responsible for both rows
+
 					double *subm_row1 = mat_row(subm, w, best.row - subm_start);
 					double *subm_row2 = mat_row(subm, w, elim_idx - subm_start);
 					memcpy(subm_row1, subm_row2, w*sizeof(*subm_row1));
 					memcpy(subm_row2, elim_row, w*sizeof(*subm_row2));
 				}
 			} else if (global_rank == best_row_proc) {
+				// this process already sent the elimination row to all others
+				// must receive replacement before row swap
 				double *subm_row = mat_row(subm, w, best.row - subm_start);
+
+				// receive replacement directly into subm
 				MPI_Recv(
 					subm_row,
 					w, MPI_DOUBLE,
@@ -204,6 +231,8 @@ int main(int argc, char *argv[]) {
 					MPI_COMM_WORLD,
 					&status);
 			} else if (global_rank == elim_row_proc) {
+				// this process already received the replacement for its row
+				// must send best_row_proc its own row for swap
 				double *subm_row = mat_row(subm, w, elim_idx - subm_start);
 				MPI_Send(
 					subm_row,
@@ -211,10 +240,13 @@ int main(int argc, char *argv[]) {
 					best_row_proc,
 					TAG_ROW_SWAP,
 					MPI_COMM_WORLD);
+
+				// replace row in subm
 				memcpy(subm_row, elim_row, w*sizeof(*subm_row));
 			}
 		}
 
+		// eliminate this process's rows in different threads
 		#pragma omp parallel for\
 					num_threads(NUM_THREADS_PER_PROCESS)
 		for (i = 0; i < subm_n_rows; i++) {
@@ -223,6 +255,8 @@ int main(int argc, char *argv[]) {
 			}
 		}
 
+		// must guarantee all processes are in the
+		// same iteration of the algorithm
 		MPI_Barrier(MPI_COMM_WORLD);
 	}
 
@@ -238,7 +272,7 @@ int main(int argc, char *argv[]) {
 		MPI_COMM_WORLD);
 
 	if (global_rank == 0) {
-		// t = omp_get_wtime() - t;
+		t = omp_get_wtime() - t;
 		// printf("%.3lf seconds\n", t);
 
 		of = fopen(OUT_FILENAME, "w+");
