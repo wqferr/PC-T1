@@ -30,10 +30,6 @@ enum {
 	TAG_ROW_SWAP
 } msg_tag;
 
-enum {
-	COLOR_SLAVE
-} role_color;
-
 // Used for reduction with MAXLOC
 // absval is the absolute value of the corresponding position
 // row is the index of its row
@@ -44,7 +40,6 @@ typedef struct {
 
 int main(int argc, char *argv[]) {
 	int global_rank, world_size;
-	int slave_rank;
 	int i;
 	int subm_start; // first row the process is responsible for
 	int subm_n_rows; // number of rows of the process's submatrix
@@ -58,7 +53,6 @@ int main(int argc, char *argv[]) {
 	double *m = NULL; // the entire matrix
 	double *subm = NULL; // rows this process is responsible for
 	double *elim_row = NULL; // row to be used for elimination
-	MPI_Comm comm_slaves;
 	MPI_Status status;
 	FILE *of; // output file of result vector
 
@@ -75,40 +69,31 @@ int main(int argc, char *argv[]) {
 		int rows_per_process;	// min number of rows per process
 								// remaining rows are distributed to processes
 								// with lowest ranks
-		int extra_rows;
 
 		read_matrix(&m, &w, &h);
 		max_elim_col = min(w, h);
 
-		rows_per_process = h / (world_size - 1);
-		extra_rows = h % (world_size - 1);
+		rows_per_process = h / world_size;
 
-		// set min rows per process (root receives none)
-		proc_row_count[0] = 0;
-		proc_elm_count[0] = 0;
-		for (i = 1; i < world_size; i++) {
+		// set min rows per process
+		for (i = 0; i < world_size; i++) {
 			proc_row_count[i] = rows_per_process;
 			proc_elm_count[i] = w*rows_per_process;
 		}
 		// add single row to process so as to distribute load
-		for (i = 1; i <= extra_rows; i++) { // distribute remaining rows
+		for (i = 0; i < h % world_size; i++) { // distribute remaining rows
 			proc_row_count[i]++;
 			proc_elm_count[i] += w;
 		}
 
 		// set arrays for MPI_Scatterv
 		for (i = 1; i < world_size; i++) {
-			displs[i] = displs[i-1] + proc_elm_count[i-1];
+			displs[i] = displs[i-1] + proc_row_count[i-1]*w;
 		}
 
 		t = omp_get_wtime();
-
-		MPI_Comm_split(MPI_COMM_WORLD, MPI_UNDEFINED, global_rank, &comm_slaves);
-	} else {
-		MPI_Comm_split(MPI_COMM_WORLD, COLOR_SLAVE, global_rank, &comm_slaves);
-		MPI_Comm_rank(comm_slaves, &slave_rank);
 	}
-	
+
 	// ========== Broadcast information to other processes =========
 	// height is only necessary for the root process at the end of execution
 
@@ -125,24 +110,22 @@ int main(int argc, char *argv[]) {
 		MPI_COMM_WORLD);
 
 	MPI_Bcast(
-		proc_row_count,			// buffer
+		proc_row_count, 		// buffer
 		world_size, MPI_INT, // block description
 		0,				// root
 		MPI_COMM_WORLD);
 
 
-	if (global_rank != 0) {
-		// find the index of the submatrix's first row
-		subm_start = 0;
-		for (i = 0; i < global_rank; i++) {
-			// sum of the length of all the previous submatrices
-			subm_start += proc_row_count[i];
-		}
-
-		// allocate submatrix given number of elements
-		subm = malloc(proc_row_count[global_rank]*w * sizeof(*subm));
-		subm_n_rows = proc_row_count[global_rank];
+	// find the index of the submatrix's first row
+	subm_start = 0;
+	for (i = 0; i < global_rank; i++) {
+		// sum of the length of all the previous submatrices
+		subm_start += proc_row_count[i];
 	}
+
+	// allocate submatrix given number of elements
+	subm = malloc(proc_row_count[global_rank]*w * sizeof(*subm));
+	subm_n_rows = proc_row_count[global_rank];
 
 	MPI_Scatterv(
 		m,				// send buffer
@@ -154,97 +137,94 @@ int main(int argc, char *argv[]) {
 		0,				// root
 		MPI_COMM_WORLD);
 
-	if (global_rank != 0) {
-		// ======== Begin processing =======
-		elim_row = malloc(w * sizeof(*elim_row));
+	// ======== Begin processing =======
+	elim_row = malloc(w * sizeof(*elim_row));
 
-		// for every column in the matrix
-		// the iterations are synchronized across all processes
-		for (elim_idx = 0; elim_idx < max_elim_col; elim_idx++) {
-			column_element best_local, best;
-			int best_row_proc, elim_row_proc;
+	// for every column in the matrix
+	// the iterations are synchronized across all processes
+	for (elim_idx = 0; elim_idx < max_elim_col; elim_idx++) {
+		column_element best_local, best;
+		int best_row_proc, elim_row_proc;
 
-			best_local.absval = -1;
-			best.absval = -1;
+		best_local.absval = -1;
+		best.absval = -1;
 
-			// no sense in parallelizing this, all of the code
-			// would be inside a critical region
-			for (i = 0; i < subm_n_rows; i++) {
-				if (i + subm_start >= elim_idx) {
-					double v = fabs(mat_get(subm, w, i, elim_idx));
-					if (v > best_local.absval) {
-						best_local.absval = v;
-						best_local.row = subm_start + i;
-					}
+		// TODO remove internal if
+		// no sense in parallelizing this, all of the code
+		// would be inside a critical region
+		for (i = 0; i < subm_n_rows; i++) {
+			if (i + subm_start >= elim_idx) {
+				double v = fabs(mat_get(subm, w, i, elim_idx));
+				if (v > best_local.absval) {
+					best_local.absval = v;
+					best_local.row = subm_start + i;
 				}
 			}
-
-			// find the global best among all local bests
-			// if the row wasn't eligible for swapping, best_local is -1 and thus
-			// will never be selected
-			MPI_Allreduce(
-				&best_local,	// send buffer
-				&best,			// recv buffer
-				1,				// send count
-				MPI_DOUBLE_INT,	// datatype
-				MPI_MAXLOC,		// operation
-				comm_slaves);
-			best_row_proc = row_find_proc(best.row, world_size, proc_row_count);
-			elim_row_proc = row_find_proc(elim_idx, world_size, proc_row_count);
-
-			if (slave_rank == best_row_proc) {
-				double *subm_row = mat_row(subm, w, best.row - subm_start);
-				row_normalize(subm_row, elim_idx, w);
-				memcpy(elim_row, subm_row, w*sizeof(*subm));
-			}
-
-			MPI_Bcast(
-				elim_row,
-				w, MPI_DOUBLE,
-				best_row_proc,
-				comm_slaves);
-
-			if (best.row != elim_idx) { // swap required
-				if (best_row_proc == elim_row_proc) { // intra-process swap
-					if (slave_rank == best_row_proc) {
-						double *subm_row1 = mat_row(
-							subm, w, best.row - subm_start);
-						double *subm_row2 = mat_row(
-							subm, w, elim_idx - subm_start);
-						memcpy(subm_row1, subm_row2, w*sizeof(*subm_row1));
-						memcpy(subm_row2, elim_row, w*sizeof(*subm_row2));
-					}
-				} else if (slave_rank == best_row_proc) {
-					double *subm_row = mat_row(subm, w, best.row - subm_start);
-					MPI_Recv(
-						subm_row,
-						w, MPI_DOUBLE,
-						elim_row_proc,
-						TAG_ROW_SWAP,
-						comm_slaves,
-						&status);
-				} else if (slave_rank == elim_row_proc) {
-					double *subm_row = mat_row(subm, w, elim_idx - subm_start);
-					MPI_Send(
-						subm_row,
-						w, MPI_DOUBLE,
-						best_row_proc,
-						TAG_ROW_SWAP,
-						comm_slaves);
-					memcpy(subm_row, elim_row, w*sizeof(*subm_row));
-				}
-			}
-
-			#pragma omp parallel for\
-						num_threads(NUM_THREADS_PER_PROCESS)
-			for (i = 0; i < subm_n_rows; i++) {
-				if (i + subm_start != elim_idx) {
-					row_elim_col(elim_row, mat_row(subm, w, i), w, elim_idx);
-				}
-			}
-
-			MPI_Barrier(comm_slaves);
 		}
+
+		// find the global best among all local bests
+		// if the row wasn't eligible for swapping, best_local is -1 and thus
+		// will never be selected
+		MPI_Allreduce(
+			&best_local,	// send buffer
+			&best,			// recv buffer
+			1,				// send count
+			MPI_DOUBLE_INT,	// datatype
+			MPI_MAXLOC,		// operation
+			MPI_COMM_WORLD);
+
+		best_row_proc = row_find_proc(best.row, world_size, proc_row_count);
+		elim_row_proc = row_find_proc(elim_idx, world_size, proc_row_count);
+		if (global_rank == best_row_proc) {
+			double *subm_row = mat_row(subm, w, best.row - subm_start);
+			row_normalize(subm_row, elim_idx, w);
+			memcpy(elim_row, subm_row, w*sizeof(*subm));
+		}
+
+		MPI_Bcast(
+			elim_row,
+			w, MPI_DOUBLE,
+			best_row_proc,
+			MPI_COMM_WORLD);
+
+		if (best.row != elim_idx) { // swap required
+			if (best_row_proc == elim_row_proc) { // intra-process swap
+				if (global_rank == best_row_proc) {
+					double *subm_row1 = mat_row(subm, w, best.row - subm_start);
+					double *subm_row2 = mat_row(subm, w, elim_idx - subm_start);
+					memcpy(subm_row1, subm_row2, w*sizeof(*subm_row1));
+					memcpy(subm_row2, elim_row, w*sizeof(*subm_row2));
+				}
+			} else if (global_rank == best_row_proc) {
+				double *subm_row = mat_row(subm, w, best.row - subm_start);
+				MPI_Recv(
+					subm_row,
+					w, MPI_DOUBLE,
+					elim_row_proc,
+					TAG_ROW_SWAP,
+					MPI_COMM_WORLD,
+					&status);
+			} else if (global_rank == elim_row_proc) {
+				double *subm_row = mat_row(subm, w, elim_idx - subm_start);
+				MPI_Send(
+					subm_row,
+					w, MPI_DOUBLE,
+					best_row_proc,
+					TAG_ROW_SWAP,
+					MPI_COMM_WORLD);
+				memcpy(subm_row, elim_row, w*sizeof(*subm_row));
+			}
+		}
+
+		#pragma omp parallel for\
+					num_threads(NUM_THREADS_PER_PROCESS)
+		for (i = 0; i < subm_n_rows; i++) {
+			if (i + subm_start != elim_idx) {
+				row_elim_col(elim_row, mat_row(subm, w, i), w, elim_idx);
+			}
+		}
+
+		MPI_Barrier(MPI_COMM_WORLD);
 	}
 
 	MPI_Gatherv(
@@ -269,9 +249,6 @@ int main(int argc, char *argv[]) {
 		fclose(of);
 	}
 
-	if (global_rank != 0) {
-		MPI_Comm_free(&comm_slaves);
-	}
 	free(proc_elm_count);
 	free(proc_row_count);
 	free(displs);
@@ -325,9 +302,9 @@ void read_matrix(double **matrix, int *width, int *height) {
 int row_find_proc(int row_idx, int world_size, int *proc_row_count) {
 	int i;
 
-	for (i = 1; i < world_size; i++) {
+	for (i = 0; i < world_size; i++) {
 		if (row_idx < proc_row_count[i]) {
-			return i-1;
+			return i;
 		}
 
 		// get the index relative to the next process
