@@ -46,7 +46,7 @@ int main(int argc, char *argv[]) {
 	int elim_idx = 0; // current row being eliminated
 	int w, h; // matrix dimensions
 	int max_elim_col; // the number of iterations the algorithm should do
-	double t; // for measuring response time
+	// double t; // for measuring response time
 	int *displs = NULL; // displacements for MPI_Scatterv
 	int *proc_row_count = NULL; // number of rows each process is responsible for
 	int *proc_elm_count = NULL; // proc_row_count for MPI_Scatterv
@@ -91,7 +91,7 @@ int main(int argc, char *argv[]) {
 			displs[i] = displs[i-1] + proc_row_count[i-1]*w;
 		}
 
-		t = omp_get_wtime();
+		// t = omp_get_wtime();
 	}
 
 	// ========== Broadcast information to other processes =========
@@ -149,7 +149,6 @@ int main(int argc, char *argv[]) {
 		best_local.absval = -1;
 		best.absval = -1;
 
-		// TODO remove internal if
 		// no sense in parallelizing this, all of the code
 		// would be inside a critical region
 		for (i = 0; i < subm_n_rows; i++) {
@@ -239,8 +238,8 @@ int main(int argc, char *argv[]) {
 		MPI_COMM_WORLD);
 
 	if (global_rank == 0) {
-		t = omp_get_wtime() - t;
-		printf("%.3lf seconds\n", t);
+		// t = omp_get_wtime() - t;
+		// printf("%.3lf seconds\n", t);
 
 		of = fopen(OUT_FILENAME, "w+");
 		for (i = 0; i < h; i++) {
