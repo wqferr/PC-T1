@@ -15,18 +15,18 @@ def plot(filename, xlabel, ylabel):
 
 if __name__ == '__main__':
 	plots = [
-		('times_nproc_1000rows', 'Number of processes', 'Number of rows'),
-		('times_nproc_5000rows', 'Number of processes', 'Number of rows'),
-		('times_nproc_10000rows', 'Number of processes', 'Number of rows'),
+		('times_nproc_1000rows', 'Number of processes'),
+		('times_nproc_5000rows', 'Number of processes'),
+		('times_nproc_10000rows', 'Number of processes'),
 
-		('times_nrows_1proc', 'Number of rows', 'Response time (seconds)'),
-		('times_nrows_2proc', 'Number of rows', 'Response time (seconds)'),
-		('times_nrows_4proc', 'Number of rows', 'Response time (seconds)'),
-		('times_nrows_8proc', 'Number of rows', 'Response time (seconds)'),
-		('times_nrows', 'Number of rows', 'Response time (seconds)')
+		('times_nrows_1proc', 'Number of rows'),
+		('times_nrows_2proc', 'Number of rows'),
+		('times_nrows_4proc', 'Number of rows'),
+		('times_nrows_8proc', 'Number of rows'),
+		('times_nrows', 'Number of rows')
 	]
 
 	for p in plots:
 		plt.figure()
-		plot(p[0] + '.txt', p[1], p[2])
+		plot(p[0] + '.txt', p[1], 'Response time (seconds)')
 		plt.savefig(p[0] + '.png', bbox_inches='tight')
